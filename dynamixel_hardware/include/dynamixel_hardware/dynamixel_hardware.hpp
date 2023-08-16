@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef DYNAMIXEL_HARDWARE__DYNAMIXEL_HARDWARE_HPP_
-#define DYNAMIXEL_HARDWARE__DYNAMIXEL_HARDWARE_HPP_
+#pragma once
 
 #include <dynamixel_workbench_toolbox/dynamixel_workbench.h>
 
@@ -33,29 +32,23 @@ using hardware_interface::return_type;
 
 namespace dynamixel_hardware
 {
-struct JointValue
+struct JointValues
 {
-  double position{0.0};
-  double velocity{0.0};
-  double effort{0.0};
+  constexpr static auto quiet_NaN = std::numeric_limits<double>::quiet_NaN();
+  double position{quiet_NaN};
+  double velocity{quiet_NaN};
+  double effort{quiet_NaN};
 };
 
 struct Joint
 {
-  JointValue state{};
-  JointValue command{};
+  Joint(uint8_t id) : id{id} {}
+  uint8_t id;
+  JointValues state{};
+  JointValues command{};
 };
 
-enum class ControlMode {
-  Position,
-  Velocity,
-  Torque,
-  Currrent,
-  ExtendedPosition,
-  MultiTurn,
-  CurrentBasedPosition,
-  PWM,
-};
+enum class ControlMode { none, position, velocity };
 
 class DynamixelHardware
 : public hardware_interface::BaseInterface<hardware_interface::SystemInterface>
@@ -64,7 +57,7 @@ public:
   RCLCPP_SHARED_PTR_DEFINITIONS(DynamixelHardware)
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type configure(const hardware_interface::HardwareInfo & info) override;
+  hardware_interface::return_type configure(const hardware_interface::HardwareInfo & info) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
@@ -73,32 +66,56 @@ public:
   std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type start() override;
+  hardware_interface::return_type start() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type stop() override;
+  hardware_interface::return_type stop() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type read() override;
+  hardware_interface::return_type read() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  return_type write() override;
+  hardware_interface::return_type write() override;
 
 private:
-  return_type enable_torque(const bool enabled);
+  void set_joints_info();
+  bool is_stub_used();
+  bool init_dynamixel_workbench();
+  bool load_dynamixels();
+  bool init_dynamixels();
+  bool init_control_items();
+  bool add_sdk_handler();
+  bool enable_torque();
+  bool disable_torque();
+  bool set_position_control_mode();
+  bool set_velocity_control_mode();
+  void reset_command();
+  bool default_configure(const hardware_interface::HardwareInfo & info);
+  bool set_up_all_dynamixels_components();
+  void set_all_states_when_stub_is_used();
+  uint16_t control_items_data_length();
+  bool read_current_states(
+    uint8_t id, uint16_t data_length, std::vector<uint32_t> & position_velocity_current);
+  JointValues convert_joint_values(
+    uint8_t id, const std::vector<uint32_t> & position_velocity_current);
+  std::vector<uint8_t> get_ids() const;
+  std::vector<int32_t> get_velocity_comands();
+  hardware_interface::return_type write_velocity_commands(
+    std::vector<uint8_t> ids, std::vector<int32_t> commands);
+  std::vector<int32_t> get_position_comands();
+  hardware_interface::return_type write_position_commands(
+    std::vector<uint8_t> ids, std::vector<int32_t> commands);
+  void set_command_to_position();
+  bool set_control_item(const char * control_item_name);
+  bool set_control_item(const char * control_item_name, const char * secondary_control_item_name);
+  void log_current_joint_position();
 
-  return_type set_control_mode(const ControlMode & mode, const bool force_set = false);
-
-  return_type reset_command();
-
+  ControlMode control_mode_{};
+  std::vector<Joint> joints_info_;
+  bool use_stub_{};
+  bool torque_enabled_{};
   DynamixelWorkbench dynamixel_workbench_;
   std::map<const char * const, const ControlItem *> control_items_;
-  std::vector<Joint> joints_;
-  std::vector<uint8_t> joint_ids_;
-  bool torque_enabled_{false};
-  ControlMode control_mode_{ControlMode::Position};
-  bool use_dummy_{false};
 };
-}  // namespace dynamixel_hardware
 
-#endif  // DYNAMIXEL_HARDWARE__DYNAMIXEL_HARDWARE_HPP_
+}  // namespace dynamixel_hardware
