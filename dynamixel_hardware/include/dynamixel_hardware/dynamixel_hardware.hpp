@@ -99,10 +99,10 @@ private:
   JointValues convert_joint_values(
     uint8_t id, const std::vector<uint32_t> & position_velocity_current);
   std::vector<uint8_t> get_ids() const;
-  std::vector<int32_t> get_velocity_comands();
+  std::vector<int32_t> get_velocity_commands();
   hardware_interface::return_type write_velocity_commands(
     std::vector<uint8_t> ids, std::vector<int32_t> commands);
-  std::vector<int32_t> get_position_comands();
+  std::vector<int32_t> get_position_commands();
   hardware_interface::return_type write_position_commands(
     std::vector<uint8_t> ids, std::vector<int32_t> commands);
   void set_command_to_position();

@@ -388,7 +388,7 @@ hardware_interface::return_type DynamixelHardware::write()
     if (not set_position_control_mode()) {
       return hardware_interface::return_type::ERROR;
     }
-    return write_position_commands(ids, get_position_comands());
+    return write_position_commands(ids, get_position_commands());
   } else {
     RCLCPP_ERROR(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Only position control is implemented");
     return hardware_interface::return_type::ERROR;
@@ -405,7 +405,7 @@ std::vector<uint8_t> DynamixelHardware::get_ids() const
   return ids;
 }
 
-std::vector<int32_t> DynamixelHardware::get_velocity_comands()
+std::vector<int32_t> DynamixelHardware::get_velocity_commands()
 {
   std::vector<int32_t> commands;
   for (const auto & joint_info : joints_info_) {
@@ -414,7 +414,7 @@ std::vector<int32_t> DynamixelHardware::get_velocity_comands()
   }
   return commands;
 }
-std::vector<int32_t> DynamixelHardware::get_position_comands()
+std::vector<int32_t> DynamixelHardware::get_position_commands()
 {
   std::vector<int32_t> commands;
   for (const auto & joint_info : joints_info_) {
