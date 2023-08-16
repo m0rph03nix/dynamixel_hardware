@@ -1,3 +1,6 @@
+# This fork allows to use dynamixels with dynamixels that use communication protocol version 1.0
+A this moment only position control is possible and only with foxy. 
+
 # dynamixel_control
 
 The [`ros2_control`](https://github.com/ros-controls/ros2_control) implementation for any kind of [ROBOTIS Dynamixel](https://emanual.robotis.com/docs/en/dxl/) robots.
