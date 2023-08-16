@@ -29,7 +29,7 @@ PLUGINLIB_EXPORT_CLASS(dynamixel_hardware::DynamixelHardware, hardware_interface
 
 namespace
 {
-constexpr const char * NAME_OF_HARDWARE_INTERFACE = "Ariadna Manipulator Hardware";
+constexpr const char * NAME_OF_HARDWARE_INTERFACE = "Dynamixel Hardware";
 constexpr const char * GOAL_POSITION = "Goal_Position";
 constexpr const char * GOAL_VELOCITY = "Goal_Velocity";
 constexpr const char * MOVING_SPEED = "Moving_Speed";
