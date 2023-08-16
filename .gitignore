@@ -35,3 +35,6 @@
 
 dynamixel-workbench
 dynamixel-workbench-msgs
+
+#IDEs
+.vscode/
