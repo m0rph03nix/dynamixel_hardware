@@ -1,5 +1,20 @@
-# This fork allows to use dynamixels with dynamixels that use communication protocol version 1.0
-A this moment only position control is possible and only with foxy. 
+# This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
+A this moment only position control is possible and only with ros-foxy. 
+Also extra parametrs could be used:
+```xml
+  <joint name="id_1">
+    <param name="id">1</param>
+    <param name="Return_Delay_Time">0</param>
+    <param name="CW_Angle_Limit">0</param>
+    <param name="CCW_Angle_Limit">1023</param>
+    <param name="Moving_Speed">1023</param>
+    <command_interface name="position" />
+    <state_interface name="position" />
+    <state_interface name="velocity" />
+    <state_interface name="effort" />
+  </joint>
+```
+
 
 # dynamixel_control
 
