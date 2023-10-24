@@ -19,7 +19,7 @@ First [install ROS 2 Foxy on Ubuntu 20.04](https://index.ros.org/doc/ros2/Instal
 ```shell
 $ source /opt/ros/foxy/setup.bash
 $ mkdir -p ~/ros/foxy && cd ~/ros/foxy
-$ git clone https://github.com/youtalk/dynamixel_control.git src
+$ git clone https://github.com/Wiktor-99/dynamixel_hardware.git src
 $ vcs import src < src/dynamixel_control.repos
 $ rosdep install --from-paths src --ignore-src -r -y
 $ colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
