@@ -22,8 +22,8 @@
 
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
-#include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "pluginlib/class_list_macros.hpp"
 
 PLUGINLIB_EXPORT_CLASS(dynamixel_hardware::DynamixelHardware, hardware_interface::SystemInterface)
 
@@ -43,21 +43,20 @@ constexpr const char * PRESENT_LOAD = "Present_Load";
 namespace dynamixel_hardware
 {
 
-hardware_interface::CallbackReturn DynamixelHardware::on_init(
+hardware_interface::return_type DynamixelHardware::configure(
   const hardware_interface::HardwareInfo & info)
 {
-  if (
-    hardware_interface::SystemInterface::on_init(info) !=
-    hardware_interface::CallbackReturn::SUCCESS) {
-    return hardware_interface::CallbackReturn::ERROR;
+  if (not default_configure(info)) {
+    return hardware_interface::return_type::ERROR;
   }
 
   set_joints_info();
 
   if (is_stub_used() or set_up_all_dynamixels_components()) {
-    return hardware_interface::CallbackReturn::SUCCESS;
+    status_ = hardware_interface::status::CONFIGURED;
+    return hardware_interface::return_type::OK;
   }
-  return hardware_interface::CallbackReturn::ERROR;
+  return hardware_interface::return_type::ERROR;
 }
 
 bool DynamixelHardware::set_up_all_dynamixels_components()
@@ -71,12 +70,20 @@ bool DynamixelHardware::set_up_all_dynamixels_components()
   return false;
 }
 
+bool DynamixelHardware::default_configure(const hardware_interface::HardwareInfo & info)
+{
+  RCLCPP_DEBUG(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "configure");
+  if (configure_default(info) != hardware_interface::return_type::OK) {
+    return false;
+  }
+  return true;
+}
+
 void DynamixelHardware::set_joints_info()
 {
   for (const auto & joint : info_.joints) {
     joints_info_.push_back(Joint(std::stoi(joint.parameters.at("id"))));
-    RCLCPP_INFO(
-      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "joint_id %d ", joints_info_.back().id);
+    RCLCPP_INFO(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "joint_id %d ", joints_info_.back().id);
   }
 }
 
@@ -211,7 +218,8 @@ bool DynamixelHardware::init_dynamixels()
           return false;
         }
         RCLCPP_INFO(
-rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Write item with success %s %d", name.c_str(), std::stoi(value));
+          rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Write item with success %s %d", name.c_str(),
+          std::stoi(value));
       }
     }
   }
@@ -276,16 +284,17 @@ std::vector<hardware_interface::CommandInterface> DynamixelHardware::export_comm
   return command_interfaces;
 }
 
-hardware_interface::CallbackReturn DynamixelHardware::on_activate(const rclcpp_lifecycle::State &)
+hardware_interface::return_type DynamixelHardware::start()
 {
   RCLCPP_DEBUG(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "start");
   set_all_states_when_stub_is_used();
 
-  read(rclcpp::Time{}, rclcpp::Duration(0, 0));
+  read();
   log_current_joint_position();
   reset_command();
-  write(rclcpp::Time{}, rclcpp::Duration(0, 0));
-  return hardware_interface::CallbackReturn::SUCCESS;
+  write();
+  status_ = hardware_interface::status::STARTED;
+  return hardware_interface::return_type::OK;
 }
 void DynamixelHardware::log_current_joint_position()
 {
@@ -305,13 +314,14 @@ void DynamixelHardware::set_all_states_when_stub_is_used()
   }
 }
 
-hardware_interface::CallbackReturn DynamixelHardware::on_deactivate(const rclcpp_lifecycle::State &)
+hardware_interface::return_type DynamixelHardware::stop()
 {
   RCLCPP_DEBUG(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "stop");
-  return hardware_interface::CallbackReturn::SUCCESS;
+  status_ = hardware_interface::status::STOPPED;
+  return hardware_interface::return_type::OK;
 }
 
-hardware_interface::return_type DynamixelHardware::read(const rclcpp::Time &, const rclcpp::Duration &)
+hardware_interface::return_type DynamixelHardware::read()
 {
   if (use_stub_) {
     return hardware_interface::return_type::OK;
@@ -347,8 +357,7 @@ JointValues DynamixelHardware::convert_joint_values(
 uint16_t DynamixelHardware::control_items_data_length()
 {
   return control_items_[PRESENT_POSITION]->data_length +
-         control_items_[PRESENT_VELOCITY]->data_length +
-         control_items_[PRESENT_CURRENT]->data_length;
+         control_items_[PRESENT_VELOCITY]->data_length + control_items_[PRESENT_CURRENT]->data_length;
 }
 
 bool DynamixelHardware::read_current_states(
@@ -356,17 +365,16 @@ bool DynamixelHardware::read_current_states(
 {
   const char * log{};
   if (dynamixel_workbench_.readRegister(
-        id, control_items_[PRESENT_POSITION]->address, data_length,
-        position_velocity_current.data(), &log)) {
+        id, control_items_[PRESENT_POSITION]->address, data_length, position_velocity_current.data(),
+        &log)) {
     return true;
   }
-  RCLCPP_ERROR(
-    rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Read current values failed! %s", log);
+  RCLCPP_ERROR(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Read current values failed! %s", log);
 
   return false;
 }
 
-hardware_interface::return_type DynamixelHardware::write(const rclcpp::Time &, const rclcpp::Duration &)
+hardware_interface::return_type DynamixelHardware::write()
 {
   if (use_stub_) {
     set_command_to_position();
@@ -382,8 +390,7 @@ hardware_interface::return_type DynamixelHardware::write(const rclcpp::Time &, c
     }
     return write_position_commands(ids, get_position_commands());
   } else {
-    RCLCPP_ERROR(
-      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Only position control is implemented");
+    RCLCPP_ERROR(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Only position control is implemented");
     return hardware_interface::return_type::ERROR;
   }
   return hardware_interface::return_type::OK;
