@@ -16,13 +16,11 @@
 
 #include <dynamixel_workbench_toolbox/dynamixel_workbench.h>
 
-#include <hardware_interface/base_interface.hpp>
 #include <hardware_interface/handle.hpp>
 #include <hardware_interface/hardware_info.hpp>
 #include <hardware_interface/system_interface.hpp>
-#include <hardware_interface/types/hardware_interface_return_values.hpp>
-#include <hardware_interface/types/hardware_interface_status_values.hpp>
 #include <map>
+#include <rclcpp_lifecycle/state.hpp>
 #include <vector>
 
 #include "dynamixel_hardware/visiblity_control.h"
@@ -50,14 +48,14 @@ struct Joint
 
 enum class ControlMode { none, position, velocity };
 
-class DynamixelHardware
-: public hardware_interface::BaseInterface<hardware_interface::SystemInterface>
+class DynamixelHardware : public hardware_interface::SystemInterface
 {
 public:
   RCLCPP_SHARED_PTR_DEFINITIONS(DynamixelHardware)
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  hardware_interface::return_type configure(const hardware_interface::HardwareInfo & info) override;
+  hardware_interface::CallbackReturn on_init(
+    const hardware_interface::HardwareInfo & info) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
@@ -66,16 +64,16 @@ public:
   std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  hardware_interface::return_type start() override;
+  hardware_interface::CallbackReturn on_activate(const rclcpp_lifecycle::State &) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  hardware_interface::return_type stop() override;
+  hardware_interface::CallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  hardware_interface::return_type read() override;
+  hardware_interface::return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
   DYNAMIXEL_HARDWARE_PUBLIC
-  hardware_interface::return_type write() override;
+  hardware_interface::return_type write(const rclcpp::Time &, const rclcpp::Duration &) override;
 
 private:
   void set_joints_info();
@@ -90,7 +88,6 @@ private:
   bool set_position_control_mode();
   bool set_velocity_control_mode();
   void reset_command();
-  bool default_configure(const hardware_interface::HardwareInfo & info);
   bool set_up_all_dynamixels_components();
   void set_all_states_when_stub_is_used();
   uint16_t control_items_data_length();
