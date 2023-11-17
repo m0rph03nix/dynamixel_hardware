@@ -10,15 +10,11 @@ The `dynamixel_hardware` package is hopefully compatible any configuration of RO
 
 ## This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
 
-At this moment fork supports only position control and only with ros-foxy.
+At this moment fork supports only position control and only with ros-humble.
 
 ## Set up
-
-First [install ROS 2 Foxy on Ubuntu 20.04](https://index.ros.org/doc/ros2/Installation/Foxy/Linux-Install-Debians/). Then follow the instruction below.
-
+In your workspace :  
 ```shell
-$ source /opt/ros/foxy/setup.bash
-$ mkdir -p ~/ros/foxy && cd ~/ros/foxy
 $ git clone https://github.com/Wiktor-99/dynamixel_hardware.git src
 $ vcs import src < src/dynamixel_control.repos
 $ rosdep install --from-paths src --ignore-src -r -y
