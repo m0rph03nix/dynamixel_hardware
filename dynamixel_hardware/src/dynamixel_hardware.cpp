@@ -354,12 +354,25 @@ uint16_t DynamixelHardware::control_items_data_length()
 bool DynamixelHardware::read_current_states(
   uint8_t id, uint16_t data_length, std::vector<uint32_t> & position_velocity_current)
 {
+  int nb_attempt = 3;
   const char * log{};
-  if (dynamixel_workbench_.readRegister(
-        id, control_items_[PRESENT_POSITION]->address, data_length,
-        position_velocity_current.data(), &log)) {
-    return true;
+
+  while(nb_attempt > 0)
+  {
+    if (dynamixel_workbench_.readRegister(
+          id, control_items_[PRESENT_POSITION]->address, data_length,
+          position_velocity_current.data(), &log)) {
+      return true;
+    }
+
+    RCLCPP_WARN(
+      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Read current values failed! %s (Attempt %d)", log, (4-nb_attempt));
+    
+    for(int i=0;i<30000;i++) {;}
+
+    nb_attempt--;
   }
+
   RCLCPP_ERROR(
     rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Read current values failed! %s", log);
 
