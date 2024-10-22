@@ -33,7 +33,7 @@ To use dynamixel_control add following **ros2_control** block.
     <param name="usb_port">/dev/ttyUSB0</param>
     <param name="baud_rate">57600</param>
     <param name="joint_ids">1,2,3</param>
-    <param name="use_stub">true</param> <!-- optional parameter -->
+    <param name="use_stub">true</param> <!-- optional parameter  if set to true, commands will NOT be forwarded to the hardware.-->
   </hardware>
   <joint name="joint_name">
   </joint>
@@ -41,7 +41,7 @@ To use dynamixel_control add following **ros2_control** block.
 ```
 
 It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**.  
-**use_stub** is an optional parameter; if set to **true**, commands will **NOT** be forwarded to the hardware.
+:warning: **use_stub** is an optional parameter; if set to **true**, commands will **NOT** be forwarded to the hardware.
 
 Also **joint** blocks inside of **ros2_control** should be used. Example of **joint** block:
 
