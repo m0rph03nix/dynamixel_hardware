@@ -10,7 +10,7 @@ The `dynamixel_hardware` package is hopefully compatible any configuration of RO
 
 ## This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
 
-At this moment fork supports only position control and only with ros-humble.
+At this moment, this fork only supports position control and only with ros-humble.
 
 ## Set up
 In your workspace :  
