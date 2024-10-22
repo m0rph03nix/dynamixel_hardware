@@ -40,7 +40,7 @@ To use dynamixel_control add following **ros2_control** block.
 </ros2_control>
 ```
 
-It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**. Use stub is optional parameter if used **commands will not forwarded to hardware**.
+It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**. **use_stub** is optional parameter if used **commands will not forwarded to hardware**.
 
 Also **joint** blocks inside of **ros2_control** should be used. Example of **joint** block:
 
