@@ -15,7 +15,7 @@ At this moment fork supports only position control and only with ros-humble.
 ## Set up
 In your workspace :  
 ```shell
-$ git clone https://github.com/Wiktor-99/dynamixel_hardware.git src
+$ git clone https://github.com/m0rph03nix/dynamixel_hardware.git src
 $ vcs import src < src/dynamixel_control.repos
 $ rosdep install --from-paths src --ignore-src -r -y
 $ colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
