@@ -10,7 +10,7 @@ The `dynamixel_hardware` package is hopefully compatible any configuration of RO
 
 ## This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
 
-At this moment fork supports only position control and only with ros-humble.
+At this moment, this fork only supports position control and only with ros-humble.
 
 ## Set up
 In your workspace :  
@@ -33,14 +33,15 @@ To use dynamixel_control add following **ros2_control** block.
     <param name="usb_port">/dev/ttyUSB0</param>
     <param name="baud_rate">57600</param>
     <param name="joint_ids">1,2,3</param>
-    <param name="use_stub">true</param> <!-- optional parameter -->
+    <param name="use_stub">true</param> <!-- optional parameter  if set to true, commands will NOT be forwarded to the hardware.-->
   </hardware>
   <joint name="joint_name">
   </joint>
 </ros2_control>
 ```
 
-It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**. Use stub is optional parameter if used **commands will not forwarded to hardware**.
+It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**.  
+:warning: **use_stub** is an optional parameter; if set to **true**, commands will **NOT** be forwarded to the hardware.
 
 Also **joint** blocks inside of **ros2_control** should be used. Example of **joint** block:
 
