@@ -10,7 +10,8 @@ The `dynamixel_hardware` package is hopefully compatible any configuration of RO
 
 ## This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
 
-At this moment, this fork only supports position control and only with ros-humble.
+At this moment, this fork supports position control and Protocol 1.0 wheel velocity
+control through `Moving_Speed`, and only with ros-humble.
 
 ## Set up
 In your workspace :  
@@ -53,12 +54,21 @@ Also **joint** blocks inside of **ros2_control** should be used. Example of **jo
     <param name="CCW_Angle_Limit">1023</param>
     <param name="Moving_Speed">1023</param>
     <command_interface name="position" />
+    <command_interface name="velocity" />
     <state_interface name="position" />
     <state_interface name="velocity" />
     <state_interface name="effort" />
   </joint>
 ```
-## Remember to configure  ros2_control package with joint_trajectory controller!!
+For AX/RX Protocol 1.0 servos, velocity control switches the servo to wheel mode by
+setting `CW_Angle_Limit` and `CCW_Angle_Limit` to `0`. The command is encoded in the
+legacy `Moving_Speed` register, so it controls wheel output/direction rather than a
+modern closed-loop `Goal_Velocity`.
+
+## Remember to configure  ros2_control package with joint_trajectory controller for position control!!
+
+For velocity control, configure a velocity controller that writes the `velocity`
+command interface.
 
 ## Usage
 

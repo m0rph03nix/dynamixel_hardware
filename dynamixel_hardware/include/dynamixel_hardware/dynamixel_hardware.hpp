@@ -44,6 +44,7 @@ struct Joint
   uint8_t id;
   JointValues state{};
   JointValues command{};
+  JointValues prev_command{};
 };
 
 enum class ControlMode { none, position, velocity };
@@ -75,6 +76,16 @@ public:
   DYNAMIXEL_HARDWARE_PUBLIC
   hardware_interface::return_type write(const rclcpp::Time &, const rclcpp::Duration &) override;
 
+  DYNAMIXEL_HARDWARE_PUBLIC
+  hardware_interface::return_type prepare_command_mode_switch(
+    const std::vector<std::string> & start_interfaces,
+    const std::vector<std::string> & stop_interfaces) override;
+
+  DYNAMIXEL_HARDWARE_PUBLIC
+  hardware_interface::return_type perform_command_mode_switch(
+    const std::vector<std::string> & start_interfaces,
+    const std::vector<std::string> & stop_interfaces) override;
+
 private:
   void set_joints_info();
   bool is_stub_used();
@@ -87,6 +98,7 @@ private:
   bool disable_torque();
   bool set_position_control_mode();
   bool set_velocity_control_mode();
+  bool restore_torque(bool torque_was_enabled);
   void reset_command();
   bool set_up_all_dynamixels_components();
   void set_all_states_when_stub_is_used();
@@ -96,7 +108,13 @@ private:
   JointValues convert_joint_values(
     uint8_t id, const std::vector<uint32_t> & position_velocity_current);
   std::vector<uint8_t> get_ids() const;
+  bool is_joint_interface(const std::string & interface_name) const;
+  bool has_position_command_changed() const;
+  bool has_velocity_command_changed() const;
   std::vector<int32_t> get_velocity_commands();
+  int32_t convert_velocity_command(uint8_t id, double velocity);
+  int32_t convert_protocol1_moving_speed_command(uint8_t id, double velocity);
+  bool uses_protocol1_moving_speed_velocity();
   hardware_interface::return_type write_velocity_commands(
     std::vector<uint8_t> ids, std::vector<int32_t> commands);
   std::vector<int32_t> get_position_commands();
