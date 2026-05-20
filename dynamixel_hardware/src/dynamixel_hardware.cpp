@@ -88,8 +88,17 @@ void DynamixelHardware::set_joints_info()
 {
   for (const auto & joint : info_.joints) {
     joints_info_.push_back(Joint(std::stoi(joint.parameters.at("id"))));
+    auto & j = joints_info_.back();
+    auto it = joint.parameters.find("invert");
+    if (it != joint.parameters.cend()) {
+      std::string val = it->second;
+      std::transform(val.begin(), val.end(), val.begin(),
+        [](unsigned char c) { return std::tolower(c); });
+      j.inverted = (val == "true");
+    }
     RCLCPP_INFO(
-      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "joint_id %d ", joints_info_.back().id);
+      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE),
+      "joint_id %d inverted=%s", j.id, j.inverted ? "true" : "false");
   }
 }
 
@@ -221,7 +230,7 @@ bool DynamixelHardware::init_dynamixels()
   for (const auto & joint_info : info_.joints) {
     const uint8_t id = std::stoi(joint_info.parameters.at("id"));
     for (const auto & [name, value] : joint_info.parameters) {
-      if (name != "id") {
+      if (name != "id" && name != "invert") {
         if (not dynamixel_workbench_.itemWrite(id, name.c_str(), std::stoi(value), &log)) {
           return false;
         }
@@ -430,6 +439,11 @@ hardware_interface::return_type DynamixelHardware::read(const rclcpp::Time &, co
       return hardware_interface::return_type::ERROR;
     }
     joint.state = convert_joint_values(joint.id, position_velocity_current);
+    if (joint.inverted) {
+      joint.state.position = -joint.state.position;
+      joint.state.velocity = -joint.state.velocity;
+      joint.state.effort   = -joint.state.effort;
+    }
   }
   return hardware_interface::return_type::OK;
 }
@@ -558,7 +572,8 @@ std::vector<int32_t> DynamixelHardware::get_velocity_commands()
 {
   std::vector<int32_t> commands;
   for (const auto & joint_info : joints_info_) {
-    commands.push_back(convert_velocity_command(joint_info.id, joint_info.command.velocity));
+    const double vel = joint_info.inverted ? -joint_info.command.velocity : joint_info.command.velocity;
+    commands.push_back(convert_velocity_command(joint_info.id, vel));
   }
   return commands;
 }
@@ -608,8 +623,8 @@ std::vector<int32_t> DynamixelHardware::get_position_commands()
 {
   std::vector<int32_t> commands;
   for (const auto & joint_info : joints_info_) {
-    commands.push_back(dynamixel_workbench_.convertRadian2Value(
-      joint_info.id, static_cast<double>(joint_info.command.position)));
+    const double pos = joint_info.inverted ? -joint_info.command.position : joint_info.command.position;
+    commands.push_back(dynamixel_workbench_.convertRadian2Value(joint_info.id, pos));
   }
   return commands;
 }

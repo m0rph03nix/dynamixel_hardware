@@ -42,6 +42,7 @@ struct Joint
 {
   Joint(uint8_t id) : id{id} {}
   uint8_t id;
+  bool inverted{false};
   JointValues state{};
   JointValues command{};
   JointValues prev_command{};
