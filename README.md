@@ -1,88 +1,182 @@
-# Package dynamixel_control
+# dynamixel_hardware
 
-The [`ros2_control`](https://github.com/ros-controls/ros2_control) implementation for any kind of [ROBOTIS Dynamixel](https://emanual.robotis.com/docs/en/dxl/) robots.
+A [`ros2_control`](https://github.com/ros-controls/ros2_control) `SystemInterface` plugin for [ROBOTIS Dynamixel](https://emanual.robotis.com/docs/en/dxl/) servos.
+Supports Protocol 1.0 devices (AX-12A, AX-18A, RX/MX series) and Protocol 2.0, position and velocity control, runtime mode switching, and a stub mode for testing without hardware.
 
-- `dynamixel_hardware`: the [`SystemInterface`](https://github.com/ros-controls/ros2_control/blob/master/hardware_interface/include/hardware_interface/system_interface.hpp) implementation for the multiple ROBOTIS Dynamixel servos.
-- `open_manipulator_x_description`: the reference implementation of the `ros2_control` robot using [ROBOTIS OpenManipulator-X](https://emanual.robotis.com/docs/en/platform/openmanipulator_x/overview/).
+## Supported hardware
 
-The `dynamixel_hardware` package is hopefully compatible any configuration of ROBOTIS Dynamixel servos thanks to the `ros2_control`'s flexible architecture.
+Any servo supported by [`dynamixel_workbench_toolbox`](https://github.com/ROBOTIS-GIT/dynamixel-workbench). Protocol 1.0 velocity control uses wheel mode via `Moving_Speed` rather than `Goal_Velocity`.
 
+| Series | Protocol | Position | Velocity |
+|--------|----------|----------|----------|
+| AX-12A / AX-18A | 1.0 | 0–300° | wheel mode |
+| RX / MX (P1 mode) | 1.0 | yes | wheel mode |
+| MX / XM / XH (P2 mode) | 2.0 | yes | `Goal_Velocity` |
 
-## This fork allows to use dynamixel_hardware package with dynamixels that use communication protocol version 1.0
+On AX-12A, switching to velocity control sets `CW_Angle_Limit` and `CCW_Angle_Limit` to `0` (wheel mode). Position control is unavailable while in that mode. The plugin switches modes automatically when the active controller changes.
 
-At this moment, this fork supports position control and Protocol 1.0 wheel velocity
-control through `Moving_Speed`, and only with ros-humble.
+## Setup
 
-## Set up
-In your workspace :  
-```shell
-$ git clone https://github.com/m0rph03nix/dynamixel_hardware.git src
-$ vcs import src < src/dynamixel_control.repos
-$ rosdep install --from-paths src --ignore-src -r -y
-$ colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-$ . install/setup.bash
+```bash
+cd <your_ws>
+git clone https://github.com/m0rph03nix/dynamixel_hardware.git src/dynamixel_hardware
+vcs import src < src/dynamixel_hardware/dynamixel_control.repos
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source install/setup.bash
 ```
 
-# Configuration of dynamixel_control in robot description
+## Configuration
 
-To use dynamixel_control add following **ros2_control** block.
+### Hardware-level parameters
 
 ```xml
-<ros2_control name="${name}" type="system">
+<ros2_control name="my_robot" type="system">
   <hardware>
     <plugin>dynamixel_hardware/DynamixelHardware</plugin>
     <param name="usb_port">/dev/ttyUSB0</param>
-    <param name="baud_rate">57600</param>
-    <param name="joint_ids">1,2,3</param>
-    <param name="use_stub">true</param> <!-- optional parameter  if set to true, commands will NOT be forwarded to the hardware.-->
+    <param name="baud_rate">1000000</param>  <!-- AX-12A factory default -->
+    <!-- <param name="use_stub">true</param> -->
   </hardware>
-  <joint name="joint_name">
+  ...
+</ros2_control>
+```
+
+`use_stub: true` disables all serial communication — commands are echoed back as states. Useful for simulation-free integration testing.
+
+### Joint parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | Dynamixel ID (required) |
+| `invert` | `true` to negate command and state signs — for motors mounted in mirror |
+| any control-table name | Written to the servo at init via `itemWrite` (e.g. `Return_Delay_Time`) |
+
+### Interfaces
+
+Each joint exposes `position` and `velocity` command interfaces, and `position`, `velocity`, `effort` state interfaces. Only one command type can be active at a time — the plugin switches the servo's control mode accordingly.
+
+## Examples
+
+### Differential drive — AX-12A
+
+The right motor faces the opposite direction — its positive rotation moves the wheel backward. `invert: true` corrects for this mounting convention at the hardware level.
+
+```xml
+<ros2_control name="DynamixelHardware" type="system">
+  <hardware>
+    <plugin>dynamixel_hardware/DynamixelHardware</plugin>
+    <param name="usb_port">/dev/ttyACM0</param>
+    <param name="baud_rate">1000000</param>
+  </hardware>
+
+  <joint name="left_wheel_joint">
+    <param name="id">1</param>
+    <command_interface name="velocity"/>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+    <state_interface name="effort"/>
+  </joint>
+
+  <joint name="right_wheel_joint">
+    <param name="id">2</param>
+    <param name="invert">true</param>
+    <command_interface name="velocity"/>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+    <state_interface name="effort"/>
   </joint>
 </ros2_control>
 ```
 
-It is necessary to set following parameters: **usb_port**, **baud_rate** and **joint_ids**.  
-:warning: **use_stub** is an optional parameter; if set to **true**, commands will **NOT** be forwarded to the hardware.
+controllers.yaml:
 
-Also **joint** blocks inside of **ros2_control** should be used. Example of **joint** block:
+```yaml
+controller_manager:
+  ros__parameters:
+    update_rate: 30
+    diff_cont:
+      type: diff_drive_controller/DiffDriveController
+    joint_broad:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+diff_cont:
+  ros__parameters:
+    left_wheel_names:  ['left_wheel_joint']
+    right_wheel_names: ['right_wheel_joint']
+    wheel_separation: 0.184
+    wheel_radius: 0.033
+```
+
+ROS 2 Jazzy publishes `TwistStamped` on `cmd_vel` by default:
+
+```bash
+ros2 topic pub /diff_cont/cmd_vel geometry_msgs/msg/TwistStamped \
+  '{header: {stamp: {sec: 0}}, twist: {linear: {x: 0.1}, angular: {z: 0.0}}}'
+```
+
+### Multi-joint position control
 
 ```xml
-  <joint name="id_1">
+<ros2_control name="DynamixelHardware" type="system">
+  <hardware>
+    <plugin>dynamixel_hardware/DynamixelHardware</plugin>
+    <param name="usb_port">/dev/ttyUSB0</param>
+    <param name="baud_rate">57600</param>
+  </hardware>
+
+  <joint name="joint1">
     <param name="id">1</param>
-    <param name="Return_Delay_Time">0</param>
-    <param name="CW_Angle_Limit">0</param>
-    <param name="CCW_Angle_Limit">1023</param>
-    <param name="Moving_Speed">1023</param>
-    <command_interface name="position" />
-    <command_interface name="velocity" />
-    <state_interface name="position" />
-    <state_interface name="velocity" />
-    <state_interface name="effort" />
+    <command_interface name="position"/>
+    <command_interface name="velocity"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+    <state_interface name="effort"/>
   </joint>
+
+  <joint name="joint2">
+    <param name="id">2</param>
+    <command_interface name="position"/>
+    <command_interface name="velocity"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+    <state_interface name="effort"/>
+  </joint>
+</ros2_control>
 ```
-For AX/RX Protocol 1.0 servos, velocity control switches the servo to wheel mode by
-setting `CW_Angle_Limit` and `CCW_Angle_Limit` to `0`. The command is encoded in the
-legacy `Moving_Speed` register, so it controls wheel output/direction rather than a
-modern closed-loop `Goal_Velocity`.
 
-## Remember to configure  ros2_control package with joint_trajectory controller for position control!!
-
-For velocity control, configure a velocity controller that writes the `velocity`
-command interface.
-
-## Usage
-
-When package is configured and you have launched both package with description of your robot and **ros2_control** you can move your robot using following command:
-.
-```shell
-$ ros2 action send_goal /joint_trajectory_controller/follow_joint_trajectory control_msgs/action/FollowJointTrajectory -f "{
-  trajectory: {
-    joint_names: [name_of_first_joint, ..., name_of_last_joint],
-    points: [
-      { positions: [0.1, ..., 0], time_from_start: { sec: 2 } },
-      { positions: [-0.1, ..., 0], time_from_start: { sec: 4 } },
-      { positions: [0, ..., 0], time_from_start: { sec: 6 } }
-    ]
-  }
-}"
+```bash
+ros2 action send_goal /joint_trajectory_controller/follow_joint_trajectory \
+  control_msgs/action/FollowJointTrajectory "{
+    trajectory: {
+      joint_names: [joint1, joint2],
+      points: [
+        { positions: [0.5, -0.5], time_from_start: { sec: 2 } },
+        { positions: [0.0,  0.0], time_from_start: { sec: 4 } }
+      ]
+    }
+  }"
 ```
+
+### Stub mode via xacro argument
+
+```xml
+<xacro:arg name="use_stub" default="false"/>
+<param name="use_stub">$(arg use_stub)</param>
+```
+
+```bash
+ros2 launch my_bringup bringup.launch.py use_stub:=true
+```
+
+## Diagnostics
+
+```bash
+ros2 control list_controllers
+ros2 control list_hardware_interfaces
+ros2 control list_hardware_components
+```
+
+
