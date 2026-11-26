@@ -44,6 +44,17 @@ constexpr float PROTOCOL_1 = 1.0f;
 constexpr float RPM_TO_RAD_PER_SEC = 0.104719755f;
 constexpr int32_t PROTOCOL1_MOVING_SPEED_MAX = 1023;
 constexpr int32_t PROTOCOL1_MOVING_SPEED_CW_OFFSET = 1024;
+// Au-dela, une vitesse lue est une trame corrompue (AX-12A : environ 6 rad/s a vide)
+constexpr double MAX_PLAUSIBLE_VELOCITY = 10.0;
+// Mode roue protocole 1 : le capteur de position couvre 0-1023 sur 300 degres. Dans les 60 degres
+// restants, la position lue vaut 0, 1023 ou une valeur figee, et la vitesse lue est fausse.
+constexpr int32_t RAW_POSITION_MIN_VALID = 4;
+constexpr int32_t RAW_POSITION_MAX_VALID = 1019;
+constexpr int32_t RAW_POSITION_MAX_STEP = 40;    // ~12 degres par cycle, bien au-dela de 6 rad/s a 50 Hz
+constexpr int32_t RAW_SPEED_MAX = 2047;
+constexpr int VALID_SAMPLES_TO_LEAVE_DEAD_ZONE = 3;
+constexpr double DEAD_ZONE_MAX_DURATION = 2.0;   // s : roue bloquee dans la zone morte
+constexpr double MAX_VELOCITY_ERROR = 2.0;       // rad/s
 
 bool has_interface_type(const std::string & interface_name, const char * interface_type)
 {
@@ -66,6 +77,7 @@ hardware_interface::CallbackReturn DynamixelHardware::on_init(
   }
 
   set_joints_info();
+  read_velocity_pi_parameters();
 
   if (is_stub_used() or set_up_all_dynamixels_components()) {
     return hardware_interface::CallbackReturn::SUCCESS;
@@ -100,6 +112,20 @@ void DynamixelHardware::set_joints_info()
       rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE),
       "joint_id %d inverted=%s", j.id, j.inverted ? "true" : "false");
   }
+}
+
+void DynamixelHardware::read_velocity_pi_parameters()
+{
+  const auto & params = info_.hardware_parameters;
+  auto get = [&](const char * name, double & value) {
+      const auto it = params.find(name);
+      if (it != params.cend()) {value = std::stod(it->second);}
+    };
+  const auto it = params.find("velocity_pi");
+  if (it != params.cend()) {velocity_pi_.enabled = (it->second == "true");}
+  get("velocity_kp", velocity_pi_.kp);
+  get("velocity_ki", velocity_pi_.ki);
+  get("velocity_integral_limit", velocity_pi_.integral_limit);
 }
 
 bool DynamixelHardware::is_stub_used()
@@ -284,8 +310,16 @@ bool DynamixelHardware::set_velocity_control_mode()
       return false;
     }
     control_mode_ = ControlMode::velocity;
+    for (auto & joint : joints_info_) {joint.velocity_integral = 0.0;}
   }
-  RCLCPP_INFO(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Velocity control");
+  protocol1_wheel_mode_ = uses_protocol1_moving_speed_velocity();
+  if (protocol1_wheel_mode_ and velocity_pi_.enabled) {
+    RCLCPP_INFO(
+      rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE),
+      "Velocity control (wheel mode, PI kp=%.2f ki=%.2f)", velocity_pi_.kp, velocity_pi_.ki);
+  } else {
+    RCLCPP_INFO(rclcpp::get_logger(NAME_OF_HARDWARE_INTERFACE), "Velocity control");
+  }
   return true;
 }
 
@@ -426,26 +460,86 @@ hardware_interface::return_type DynamixelHardware::perform_command_mode_switch(
   return hardware_interface::return_type::OK;
 }
 
-hardware_interface::return_type DynamixelHardware::read(const rclcpp::Time &, const rclcpp::Duration &)
+hardware_interface::return_type DynamixelHardware::read(
+  const rclcpp::Time &, const rclcpp::Duration & period)
 {
   if (use_stub_) {
     return hardware_interface::return_type::OK;
   }
   const uint16_t data_length = control_items_data_length();
   std::vector<uint32_t> position_velocity_current(data_length);
+  const double dt = period.seconds();
 
   for (auto & joint : joints_info_) {
     if (not read_current_states(joint.id, data_length, position_velocity_current)) {
       return hardware_interface::return_type::ERROR;
     }
-    joint.state = convert_joint_values(joint.id, position_velocity_current);
+    const JointValues previous = joint.state;
+    JointValues values = convert_joint_values(joint.id, position_velocity_current);
     if (joint.inverted) {
-      joint.state.position = -joint.state.position;
-      joint.state.velocity = -joint.state.velocity;
-      joint.state.effort   = -joint.state.effort;
+      values.position = -values.position;
+      values.velocity = -values.velocity;
+      values.effort   = -values.effort;
     }
+    // Trame corrompue : on garde la vitesse precedente
+    if (std::abs(values.velocity) > MAX_PLAUSIBLE_VELOCITY and not std::isnan(previous.velocity)) {
+      values.velocity = previous.velocity;
+    }
+    if (uses_wheel_mode() and not std::isnan(previous.position)) {
+      const int32_t raw_position =
+        DXL_MAKEWORD(position_velocity_current[0], position_velocity_current[1]);
+      const int32_t raw_speed =
+        DXL_MAKEWORD(position_velocity_current[2], position_velocity_current[3]);
+      // Dans la zone morte, la meilleure estimation de la vitesse est la consigne
+      if (update_dead_zone(joint, raw_position, raw_speed, values.velocity, dt)) {
+        values.velocity = joint.command.velocity;
+      }
+      // Le capteur revient a zero a chaque tour : la position est integree depuis la vitesse
+      values.position = previous.position + values.velocity * dt;
+    } else {
+      joint.last_raw_position = -1;
+      joint.in_dead_zone = false;
+    }
+    joint.state = values;
   }
   return hardware_interface::return_type::OK;
+}
+
+bool DynamixelHardware::update_dead_zone(
+  Joint & joint, int32_t raw_position, int32_t raw_speed, double velocity, double dt)
+{
+  const bool out_of_range =
+    raw_position < RAW_POSITION_MIN_VALID or raw_position > RAW_POSITION_MAX_VALID;
+  const bool jump = joint.last_raw_position >= 0 and
+    std::abs(raw_position - joint.last_raw_position) > RAW_POSITION_MAX_STEP;
+  const bool stuck = joint.last_raw_position == raw_position and
+    std::abs(joint.command.velocity) > 0.6;  // au moins 2 pas de capteur par cycle
+  joint.last_raw_position = raw_position;
+
+  // Une roue suivie par le PI ne s'ecarte jamais autant de sa consigne
+  const bool implausible = std::abs(velocity - joint.command.velocity) > MAX_VELOCITY_ERROR;
+
+  if (out_of_range or jump or raw_speed > RAW_SPEED_MAX or implausible) {
+    joint.in_dead_zone = true;
+    joint.valid_streak = 0;
+  } else if (joint.in_dead_zone) {
+    joint.valid_streak = stuck ? 0 : joint.valid_streak + 1;
+    if (joint.valid_streak >= VALID_SAMPLES_TO_LEAVE_DEAD_ZONE) {
+      joint.in_dead_zone = false;
+    }
+  }
+
+  joint.dead_zone_time = joint.in_dead_zone ? joint.dead_zone_time + dt : 0.0;
+  // Roue arretee ou bloquee dans la zone morte : on revient a la vitesse lue
+  if (joint.dead_zone_time > DEAD_ZONE_MAX_DURATION and raw_speed <= RAW_SPEED_MAX) {
+    return false;
+  }
+  return joint.in_dead_zone;
+}
+
+bool DynamixelHardware::uses_wheel_mode() const
+{
+  return control_mode_ == ControlMode::velocity and protocol1_wheel_mode_;
 }
 
 JointValues DynamixelHardware::convert_joint_values(
@@ -499,7 +593,8 @@ bool DynamixelHardware::read_current_states(
   return false;
 }
 
-hardware_interface::return_type DynamixelHardware::write(const rclcpp::Time &, const rclcpp::Duration &)
+hardware_interface::return_type DynamixelHardware::write(
+  const rclcpp::Time &, const rclcpp::Duration & period)
 {
   if (use_stub_) {
     set_command_to_position();
@@ -509,6 +604,7 @@ hardware_interface::return_type DynamixelHardware::write(const rclcpp::Time &, c
     return hardware_interface::return_type::OK;
   }
   std::vector<uint8_t> ids{get_ids()};
+  update_velocity_outputs(period.seconds());
 
   if (has_velocity_command_changed()) {
     if (not set_velocity_control_mode()) {
@@ -568,11 +664,37 @@ bool DynamixelHardware::has_velocity_command_changed() const
   });
 }
 
+void DynamixelHardware::update_velocity_outputs(double dt)
+{
+  for (auto & joint : joints_info_) {
+    const double command = joint.command.velocity;
+    // Le mode roue protocole 1 regle une puissance, pas une vitesse : un PI corrige l'ecart
+    if (not (uses_wheel_mode() and velocity_pi_.enabled) or std::isnan(command) or
+      std::isnan(joint.state.velocity))
+    {
+      joint.velocity_output = command;
+      continue;
+    }
+    if (command == 0.0) {
+      joint.velocity_integral = 0.0;
+      joint.velocity_output = 0.0;
+      continue;
+    }
+    const double error = command - joint.state.velocity;
+    if (dt > 0.0 and not joint.in_dead_zone) {
+      joint.velocity_integral = std::clamp(
+        joint.velocity_integral + velocity_pi_.ki * error * dt,
+        -velocity_pi_.integral_limit, velocity_pi_.integral_limit);
+    }
+    joint.velocity_output = command + velocity_pi_.kp * error + joint.velocity_integral;
+  }
+}
+
 std::vector<int32_t> DynamixelHardware::get_velocity_commands()
 {
   std::vector<int32_t> commands;
   for (const auto & joint_info : joints_info_) {
-    const double vel = joint_info.inverted ? -joint_info.command.velocity : joint_info.command.velocity;
+    const double vel = joint_info.inverted ? -joint_info.velocity_output : joint_info.velocity_output;
     commands.push_back(convert_velocity_command(joint_info.id, vel));
   }
   return commands;

@@ -44,6 +44,22 @@ source install/setup.bash
 
 `use_stub: true` disables all serial communication — commands are echoed back as states. Useful for simulation-free integration testing.
 
+### Wheel mode on Protocol 1.0 servos (AX, RX, MX)
+
+In wheel mode, Protocol 1.0 servos have two limitations that the plugin corrects, so that the `velocity` interface really behaves as a velocity:
+
+- **`Moving_Speed` sets a motor power, not a speed.** The actual speed depends on friction and load: on an AX-12A, a command of 0.86 rad/s gave about 0.3 rad/s. The plugin closes the loop with a PI controller on the measured speed (output = command + Kp·error + integral). The integral is reset when the command is zero.
+- **The position sensor covers 300° out of 360°.** In the remaining 60°, the position reads 0, 1023 or a frozen value, and the speed reading is wrong; the raw position also wraps at each turn. The plugin integrates the wheel position from the measured speed, detects the dead zone (out-of-range or jumping position, implausible speed) and uses the command as speed estimate while the wheel crosses it.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `velocity_pi` | `true` | `false` to send the command as is (open loop) |
+| `velocity_kp` | `1.0` | Proportional gain |
+| `velocity_ki` | `4.0` | Integral gain (1/s) |
+| `velocity_integral_limit` | `3.0` | Bound of the integral term (rad/s) |
+
+Measured on two AX-12A at 12 V, rotating in place: 97–101 % of the commanded speed from 0.86 to 1.21 rad/s, and an odometry error of about 0.01 rad over 10 rad of rotation.
+
 ### Joint parameters
 
 | Parameter | Description |

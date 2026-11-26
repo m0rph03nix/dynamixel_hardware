@@ -46,6 +46,23 @@ struct Joint
   JointValues state{};
   JointValues command{};
   JointValues prev_command{};
+  // Mode roue protocole 1 : position integree depuis la vitesse, et regulateur PI de vitesse
+  double velocity_integral{0.0};
+  double velocity_output{0.0};
+  // Zone morte du capteur (60 degres sur 360) : lectures de position et de vitesse fausses
+  int32_t last_raw_position{-1};
+  bool in_dead_zone{false};
+  int valid_streak{0};
+  double dead_zone_time{0.0};
+};
+
+// Gains du regulateur PI de vitesse (mode roue protocole 1)
+struct VelocityPI
+{
+  bool enabled{true};
+  double kp{1.0};
+  double ki{4.0};
+  double integral_limit{3.0};  // rad/s
 };
 
 enum class ControlMode { none, position, velocity };
@@ -125,11 +142,18 @@ private:
   bool set_control_item(const char * control_item_name);
   bool set_control_item(const char * control_item_name, const char * secondary_control_item_name);
   void log_current_joint_position();
+  bool uses_wheel_mode() const;
+  void read_velocity_pi_parameters();
+  void update_velocity_outputs(double dt);
+  bool update_dead_zone(
+    Joint & joint, int32_t raw_position, int32_t raw_speed, double velocity, double dt);
 
   ControlMode control_mode_{};
   std::vector<Joint> joints_info_;
   bool use_stub_{};
   bool torque_enabled_{};
+  bool protocol1_wheel_mode_{};
+  VelocityPI velocity_pi_{};
   DynamixelWorkbench dynamixel_workbench_;
   std::map<const char * const, const ControlItem *> control_items_;
 };
