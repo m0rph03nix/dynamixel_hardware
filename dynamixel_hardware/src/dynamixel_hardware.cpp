@@ -310,7 +310,18 @@ bool DynamixelHardware::set_velocity_control_mode()
       return false;
     }
     control_mode_ = ControlMode::velocity;
-    for (auto & joint : joints_info_) {joint.velocity_integral = 0.0;}
+    const bool entering_wheel_mode = uses_protocol1_moving_speed_velocity();
+    for (auto & joint : joints_info_) {
+      joint.velocity_integral = 0.0;
+      // En mode roue, la position est integree et donc relative : elle part de 0, comme en
+      // simulation. Sinon diff_drive_controller compterait la position absolue du capteur
+      // comme un deplacement a sa premiere mise a jour.
+      if (entering_wheel_mode) {
+        joint.state.position = 0.0;
+        joint.last_raw_position = -1;
+        joint.in_dead_zone = false;
+      }
+    }
   }
   protocol1_wheel_mode_ = uses_protocol1_moving_speed_velocity();
   if (protocol1_wheel_mode_ and velocity_pi_.enabled) {
