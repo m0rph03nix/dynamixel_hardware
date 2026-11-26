@@ -46,10 +46,12 @@ source install/setup.bash
 
 ### Wheel mode on Protocol 1.0 servos (AX, RX, MX)
 
-In wheel mode, Protocol 1.0 servos have two limitations that the plugin corrects, so that the `velocity` interface really behaves as a velocity:
+In wheel mode, Protocol 1.0 servos have several limitations that the plugin corrects, so that the `velocity` interface really behaves as a velocity:
 
 - **`Moving_Speed` sets a motor power, not a speed.** The actual speed depends on friction and load: on an AX-12A, a command of 0.86 rad/s gave about 0.3 rad/s. The plugin closes the loop with a PI controller on the measured speed (output = command + Kp·error + integral). The integral is reset when the command is zero.
-- **The position sensor covers 300° out of 360°.** In the remaining 60°, the position reads 0, 1023 or a frozen value, and the speed reading is wrong; the raw position also wraps at each turn. The plugin integrates the wheel position from the measured speed, detects the dead zone (out-of-range or jumping position, implausible speed) and uses the command as speed estimate while the wheel crosses it.
+- **`Present_Speed` overestimates the real speed** by 5 to 9 % on the AX-12A (measured against the time of a full wheel turn). The speed is therefore computed from the position sensor and filtered over about 0.1 s.
+- **The position sensor covers 300° out of 360°.** In the remaining 60°, the position reads 0, 1023 or a frozen value that jitters by a few steps, and the speed reading is wrong. The plugin detects the dead zone (out-of-range, jumping or frozen position, implausible speed), uses the command as speed estimate while the wheel crosses it (0 when stopped), and leaves it only when the wheel progresses again from the expected edge.
+- **The raw position wraps at each turn.** The wheel position is continuous and relative: it starts at 0 when entering wheel mode, as in simulation, so `diff_drive_controller` does not count the absolute sensor angle as a motion. Outside the dead zone, it follows the sensor exactly; after a dead zone, it is resynchronised on the sensor, modulo one turn, using the turn closest to the estimate. The sensor is trusted only once the wheel has been seen moving, since a wheel stopped in the dead zone may read a wrong value.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -58,7 +60,7 @@ In wheel mode, Protocol 1.0 servos have two limitations that the plugin corrects
 | `velocity_ki` | `4.0` | Integral gain (1/s) |
 | `velocity_integral_limit` | `3.0` | Bound of the integral term (rad/s) |
 
-Measured on two AX-12A at 12 V, rotating in place: 97–101 % of the commanded speed from 0.86 to 1.21 rad/s, and an odometry error of about 0.01 rad over 10 rad of rotation.
+Measured on a simplebot with two AX-12A at 12 V, starting with the wheels at any position, including inside the dead zone: 0.113 to 0.117 m for 0.12 m commanded in a straight line (heading error below 0.03 rad), and 9.74 to 9.95 rad for 10 rad of rotation in place.
 
 ### Joint parameters
 

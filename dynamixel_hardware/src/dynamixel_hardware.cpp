@@ -53,7 +53,17 @@ constexpr int32_t RAW_POSITION_MAX_VALID = 1019;
 constexpr int32_t RAW_POSITION_MAX_STEP = 40;    // ~12 degres par cycle, bien au-dela de 6 rad/s a 50 Hz
 constexpr int32_t RAW_SPEED_MAX = 2047;
 constexpr int VALID_SAMPLES_TO_LEAVE_DEAD_ZONE = 3;
-constexpr double DEAD_ZONE_MAX_DURATION = 2.0;   // s : roue bloquee dans la zone morte
+// Au-dela de 0,6 rad/s, une roue qui tourne avance d'au moins 2 pas de capteur par cycle :
+// une position figee pendant 3 cycles ne peut venir que de la zone morte.
+constexpr double STUCK_MIN_COMMAND = 0.6;        // rad/s
+constexpr int STUCK_SAMPLES_TO_ENTER_DEAD_ZONE = 3;
+constexpr double STUCK_PROGRESS_RATIO = 0.4;     // avance minimale par cycle / avance attendue
+constexpr int32_t RAW_POSITION_EXIT_MARGIN = 150;  // pas depuis le bord, a la sortie de la zone
+constexpr int32_t TRUST_PROGRESS = 20;           // pas d'avance continue pour croire le capteur
+constexpr double RAW_TO_RAD = 300.0 / 1023.0 * M_PI / 180.0;  // 1023 pas sur 300 degres
+// La vitesse lue (Present_Speed) surestime la vitesse reelle de 5 a 9 % sur l'AX-12A : la vitesse
+// est calculee depuis la position, et filtree sur environ 0,1 s (1 pas de capteur = 0,005 rad)
+constexpr double VELOCITY_FILTER_TIME_CONSTANT = 0.1;  // s
 constexpr double MAX_VELOCITY_ERROR = 2.0;       // rad/s
 
 bool has_interface_type(const std::string & interface_name, const char * interface_type)
@@ -320,6 +330,11 @@ bool DynamixelHardware::set_velocity_control_mode()
         joint.state.position = 0.0;
         joint.last_raw_position = -1;
         joint.in_dead_zone = false;
+        joint.stuck_streak = 0;
+        joint.reference_valid = false;
+        joint.reference_trusted = false;
+        joint.previous_sample_valid = false;
+        joint.trust_progress = 0;
       }
     }
   }
@@ -502,11 +517,60 @@ hardware_interface::return_type DynamixelHardware::read(
       const int32_t raw_speed =
         DXL_MAKEWORD(position_velocity_current[2], position_velocity_current[3]);
       // Dans la zone morte, la meilleure estimation de la vitesse est la consigne
-      if (update_dead_zone(joint, raw_position, raw_speed, values.velocity, dt)) {
+      const bool dead_zone = update_dead_zone(joint, raw_position, raw_speed, values.velocity, dt);
+      if (dead_zone) {
         values.velocity = joint.command.velocity;
+        joint.filtered_velocity = values.velocity;
       }
-      // Le capteur revient a zero a chaque tour : la position est integree depuis la vitesse
+      if (joint.in_dead_zone) {
+        joint.previous_sample_valid = false;
+      }
+      // A l'arret, la vitesse lue n'est fiable que si le capteur l'est
+      if (joint.command.velocity == 0.0 and
+        (joint.in_dead_zone or not joint.reference_trusted))
+      {
+        values.velocity = 0.0;
+      }
+      // Le capteur revient a zero a chaque tour : la position est d'abord integree
       values.position = previous.position + values.velocity * dt;
+      if (not joint.in_dead_zone) {
+        // Hors zone morte, la position lue est exacte : l'angle parcouru depuis la derniere lecture
+        // valide, modulo un tour, recale la position, y compris apres un passage en zone morte.
+        // La reference n'est fiable qu'une fois la roue vue en mouvement : a l'arret dans la zone
+        // morte, la valeur lue peut etre figee et fausse.
+        const double angle = raw_position * RAW_TO_RAD;
+        if (joint.reference_valid and joint.reference_trusted) {
+          // L'angle lu est connu modulo un tour : on garde le tour le plus proche de la position
+          // estimee, qui ne s'ecarte pas d'un demi-tour meme apres une longue zone morte
+          const double sign = joint.inverted ? -1.0 : 1.0;
+          const double measured = angle - joint.reference_angle;
+          const double predicted = sign * (values.position - joint.reference_position);
+          const double delta =
+            measured + 2.0 * M_PI * std::round((predicted - measured) / (2.0 * M_PI));
+          values.position = joint.reference_position + sign * delta;
+          if (joint.previous_sample_valid and dt > 0.0) {
+            const double alpha = dt / (VELOCITY_FILTER_TIME_CONSTANT + dt);
+            joint.filtered_velocity += alpha * ((values.position - joint.reference_position) / dt -
+              joint.filtered_velocity);
+            values.velocity = joint.filtered_velocity;
+          } else {
+            joint.filtered_velocity = values.velocity;
+          }
+          joint.previous_sample_valid = true;
+        } else if (joint.reference_valid) {
+          // Une valeur figee tremble sans avancer : on attend une avance continue dans un sens
+          const int32_t step = raw_position - joint.reference_raw;
+          joint.trust_progress = (step == 0 or (step > 0) == (joint.trust_progress > 0)) ?
+            joint.trust_progress + step : step;
+          if (std::abs(joint.trust_progress) >= TRUST_PROGRESS) {
+            joint.reference_trusted = true;
+          }
+        }
+        joint.reference_valid = true;
+        joint.reference_raw = raw_position;
+        joint.reference_angle = angle;
+        joint.reference_position = values.position;
+      }
     } else {
       joint.last_raw_position = -1;
       joint.in_dead_zone = false;
@@ -519,32 +583,47 @@ hardware_interface::return_type DynamixelHardware::read(
 bool DynamixelHardware::update_dead_zone(
   Joint & joint, int32_t raw_position, int32_t raw_speed, double velocity, double dt)
 {
+  const int32_t step = joint.last_raw_position >= 0 ? raw_position - joint.last_raw_position : 0;
   const bool out_of_range =
     raw_position < RAW_POSITION_MIN_VALID or raw_position > RAW_POSITION_MAX_VALID;
-  const bool jump = joint.last_raw_position >= 0 and
-    std::abs(raw_position - joint.last_raw_position) > RAW_POSITION_MAX_STEP;
-  const bool stuck = joint.last_raw_position == raw_position and
-    std::abs(joint.command.velocity) > 0.6;  // au moins 2 pas de capteur par cycle
+  const bool jump = std::abs(step) > RAW_POSITION_MAX_STEP;
   joint.last_raw_position = raw_position;
 
-  // Une roue suivie par le PI ne s'ecarte jamais autant de sa consigne
-  const bool implausible = std::abs(velocity - joint.command.velocity) > MAX_VELOCITY_ERROR;
+  // Sens de variation attendu de la position brute, et pas attendu par cycle
+  const double command = joint.command.velocity;
+  const int direction = command == 0.0 ? 0 : ((command > 0.0) != joint.inverted ? 1 : -1);
+  const double expected_step = std::abs(command) * dt / RAW_TO_RAD;
 
-  if (out_of_range or jump or raw_speed > RAW_SPEED_MAX or implausible) {
+  // Assez vite pour juger de l'avance a chaque cycle : une valeur figee (qui tremble de quelques
+  // pas) n'avance pas comme la consigne le demande
+  const bool fast = std::abs(command) > STUCK_MIN_COMMAND and dt > 0.0;
+  const bool progressing = not fast or direction * step >= STUCK_PROGRESS_RATIO * expected_step;
+  joint.stuck_streak = progressing ? 0 : joint.stuck_streak + 1;
+  const bool frozen = joint.stuck_streak >= STUCK_SAMPLES_TO_ENTER_DEAD_ZONE;
+
+  // Une roue suivie par le PI ne s'ecarte jamais autant de sa consigne
+  const bool implausible = std::abs(velocity - command) > MAX_VELOCITY_ERROR;
+
+  // A la sortie de la zone morte, la position lue repart du bord correspondant au sens de rotation
+  const bool near_exit_edge =
+    direction > 0 ? raw_position <= RAW_POSITION_EXIT_MARGIN :
+    direction < 0 ? raw_position >= 1023 - RAW_POSITION_EXIT_MARGIN : true;
+
+  const bool bad_reading = out_of_range or jump or raw_speed > RAW_SPEED_MAX or implausible;
+  if (bad_reading or frozen) {
+    // Lecture aberrante : la roue traverse la zone morte, elle en sortira par un bord.
+    // Position figee seule : il suffit que la roue avance de nouveau (demarrage, blocage).
+    joint.dead_zone_needs_edge = (joint.in_dead_zone and joint.dead_zone_needs_edge) or bad_reading;
     joint.in_dead_zone = true;
     joint.valid_streak = 0;
   } else if (joint.in_dead_zone) {
-    joint.valid_streak = stuck ? 0 : joint.valid_streak + 1;
+    const bool exit_ok = progressing and (near_exit_edge or not joint.dead_zone_needs_edge);
+    joint.valid_streak = exit_ok ? joint.valid_streak + 1 : 0;
     if (joint.valid_streak >= VALID_SAMPLES_TO_LEAVE_DEAD_ZONE) {
       joint.in_dead_zone = false;
     }
   }
 
-  joint.dead_zone_time = joint.in_dead_zone ? joint.dead_zone_time + dt : 0.0;
-  // Roue arretee ou bloquee dans la zone morte : on revient a la vitesse lue
-  if (joint.dead_zone_time > DEAD_ZONE_MAX_DURATION and raw_speed <= RAW_SPEED_MAX) {
-    return false;
-  }
   return joint.in_dead_zone;
 }
 

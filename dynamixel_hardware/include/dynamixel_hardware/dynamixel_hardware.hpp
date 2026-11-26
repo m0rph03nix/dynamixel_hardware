@@ -53,7 +53,18 @@ struct Joint
   int32_t last_raw_position{-1};
   bool in_dead_zone{false};
   int valid_streak{0};
-  double dead_zone_time{0.0};
+  int stuck_streak{0};
+  // Derniere lecture valide du capteur, pour recaler la position a la sortie de la zone morte
+  bool reference_valid{false};
+  bool reference_trusted{false};
+  int32_t reference_raw{0};
+  double reference_angle{0.0};
+  double reference_position{0.0};
+  // Vitesse calculee depuis le capteur de position, filtree
+  bool previous_sample_valid{false};
+  int32_t trust_progress{0};
+  bool dead_zone_needs_edge{false};
+  double filtered_velocity{0.0};
 };
 
 // Gains du regulateur PI de vitesse (mode roue protocole 1)
